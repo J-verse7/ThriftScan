@@ -190,20 +190,19 @@ Respond in this EXACT format:
 **Reason:** [2–3 sentences, honest, no fluff]"""
 
                 # ── API Call ────────────────────────────────────────────────
+                              # ── API Call ────────────────────────────────────────────────
                 client = InferenceClient(token=HF_TOKEN)
-                response = client.chat.completions.create(
-                    model="meta-llama/Llama-3.1-8B-Instruct",
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{img_b64}"}},
-                            {"type": "text", "text": prompt_text}
-                        ]
-                    }],
-                    max_tokens=600
-                )
-                ai_text = response.choices[0].message.content
 
+                caption = client.image_to_text(
+                    image=buf.getvalue(),
+                    model="Salesforce/blip-image-captioning-large"
+                )
+
+                ai_text = f"""
+**Item Description:** {caption.generated_text}
+
+**AI Advice:** Evaluate quality, stitching, material wear and resale value based on this description.
+"""s
                 # ── Display results ─────────────────────────────────────────
                 st.markdown(f'<div class="result-card">{ai_text}</div>', unsafe_allow_html=True)
 
