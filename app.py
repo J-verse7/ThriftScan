@@ -192,7 +192,7 @@ Respond in this EXACT format:
                 # ── API Call ────────────────────────────────────────────────
                 client = InferenceClient(token=HF_TOKEN)
                 response = client.chat.completions.create(
-                    model="Qwen/Qwen2-VL-2B-Instruct",
+                    model="meta-llama/Llama-3.1-8B-Instruct",
                     messages=[{
                         "role": "user",
                         "content": [
