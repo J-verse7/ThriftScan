@@ -180,7 +180,8 @@ with col_right:
             
             # Using the direct model string which works best with configured API keys
             # Force use of the base model path to bypass the v1beta 404 error
-            model = genai.GenerativeModel("models/gemini-1.5-flash")
+            # Use the newer, stable 2.0 Flash model to stop the 404/v1beta errors
+            model = genai.GenerativeModel("gemini-2.0-flash")
             
             response = model.generate_content([
                 _build_prompt(price, mode),
