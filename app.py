@@ -538,25 +538,21 @@ with col_right:
                             "Do not add any extra commentary, preamble, or markdown."
                         ),
                     },
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{b64_image}"
-                                },
+                           {
+                               "role": "user",
+                               "content": [
+                                   {
+                                     "type": "image",
+                                     "image": b64_image
+                                    },
+                                    {
+                                      "type": "text",
+                                      "text": prompt,
+                                     },
+                                 ],
                             },
-                            {
-                                "type": "text",
-                                "text": prompt,
-                            },
-                        ],
-                    },
-                ],
-                max_tokens=600,
-                temperature=0.4,
-            )
+                         ]
+                     )
 
             raw_text = response.choices[0].message.content.strip()
 
