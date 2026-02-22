@@ -1,3 +1,9 @@
+<<<<<<< HEAD
 streamlit>=1.35.0
 huggingface_hub>=0.23.0
 Pillow>=10.0.0
+=======
+streamlit
+huggingface_hub
+Pillow
+>>>>>>> adc1a98dd38914a77d5e8001b8cdf77656f948ec
