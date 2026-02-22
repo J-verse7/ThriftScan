@@ -1,8 +1,8 @@
 import streamlit as st
-from huggingface_hub import InferenceClient
+import google.generativeai as genai
 from PIL import Image
 import io
-import base64
+
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -14,16 +14,15 @@ st.set_page_config(
 
 # ── Secure token load ──────────────────────────────────────────────────────────
 try:
-    HF_TOKEN = st.secrets["HF_TOKEN"]
-except (KeyError, FileNotFoundError):
-    st.error(
-        "Configuration error: HF_TOKEN not found. "
-        "Add it under App Settings → Secrets on Streamlit Cloud."
-    )
+    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    st.error("GEMINI_API_KEY missing in Streamlit Secrets.")
     st.stop()
 
+genai.configure(api_key=GEMINI_API_KEY)
+
 # ── Model ──────────────────────────────────────────────────────────────────────
-VLM_MODEL = "Qwen/Qwen2-VL-2B-Instruct"   # Single vision-language model: image + text → structured output
+#    # Single vision-language model: image + text → structured output
 
 # ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -524,53 +523,48 @@ with col_right:
             st.stop()
 
         # ── Single VLM call: image + instruction → structured output ────────
-        try:
-            prompt = _build_prompt(price, mode)
+        # ── Single VLM call: image + instruction → structured output ────────
+try:
+    prompt = _build_prompt(price, mode)
 
-            response = client.chat.completions.create(
-                model=VLM_MODEL,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a professional thrift store expert and fashion stylist. "
-                            "Always respond strictly in the structured format requested. "
-                            "Do not add any extra commentary, preamble, or markdown."
-                        ),
-                    },
-                           {
-                               "role": "user",
-                               "content": [
-                                   {
-                                     "type": "image",
-                                     "image": b64_image
-                                    },
-                                    {
-                                      "type": "text",
-                                      "text": prompt,
-                                     },
-                                 ],
-                            },
-                         ]
-                     )
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
-            raw_text = response.choices[0].message.content.strip()
+    img_bytes = buf.getvalue()
 
-        except Exception as e:
-            step1.empty()
-            st.markdown(f'<div class="err-box">{_map_error(str(e))}</div>', unsafe_allow_html=True)
-            st.stop()
+    response = model.generate_content(
+        [
+            prompt,
+            {
+                "mime_type": "image/jpeg",
+                "data": img_bytes,
+            },
+        ],
+        generation_config={
+            "temperature": 0.4,
+            "max_output_tokens": 600,
+        },
+    )
 
-        step1.empty()
+    raw_text = response.text
+
+except Exception as e:
+    step1.empty()
+    st.markdown(
+        f'<div class="err-box">{_map_error(str(e))}</div>',
+        unsafe_allow_html=True,
+    )
+    st.stop()
+
+    step1.empty()
 
         # ── Parse and render results ───────────────────────────────────────
-        _render_results(raw_text, price, mode)
+    _render_results(raw_text, price, mode)
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown("<div style='height:48px'></div>", unsafe_allow_html=True)
 st.markdown("""
 <div style="text-align:center; font-size:0.68em; letter-spacing:0.2em;
 text-transform:uppercase; color:#2a2618; padding-bottom:24px;">
-    ThriftScan AI &nbsp;·&nbsp; Qwen2-VL &nbsp;·&nbsp; Free Tier
+    ThriftScan AI · Gemini 1.5 Flash · Student Access
 </div>
 """, unsafe_allow_html=True)
