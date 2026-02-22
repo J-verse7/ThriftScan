@@ -2,6 +2,7 @@ import streamlit as st
 from huggingface_hub import InferenceClient
 from PIL import Image
 import io
+import base64
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -21,9 +22,8 @@ except (KeyError, FileNotFoundError):
     )
     st.stop()
 
-# ── Models ─────────────────────────────────────────────────────────────────────
-CAPTION_MODEL = "Salesforce/blip-image-captioning-large"   # Step 1: image → text
-ANALYSIS_MODEL = "mistralai/Mistral-7B-Instruct-v0.2"      # Step 2: text → verdict
+# ── Model ──────────────────────────────────────────────────────────────────────
+VLM_MODEL = "Qwen/Qwen2-VL-2B-Instruct"   # Single vision-language model: image + text → structured output
 
 # ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -239,205 +239,77 @@ hr { border-color: #1a1910 !important; margin: 24px 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ── Header ─────────────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="thrift-header">
-    <div class="thrift-wordmark">Thrift<span>Scan</span> AI</div>
-    <div class="thrift-sub">Intelligent Clothing Analysis</div>
-</div>
-""", unsafe_allow_html=True)
+# ══════════════════════════════════════════════════════════════════════════════
+# ── Helper functions  (MUST be defined before they are called below) ──────────
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ── Layout ─────────────────────────────────────────────────────────────────────
-col_left, col_right = st.columns([1, 1.35], gap="large")
+def _map_error(err: str) -> str:
+    """Convert raw exceptions into clean user-facing messages."""
+    e = err.lower()
+    if "401" in e or "unauthorized" in e:
+        return "Authentication failed. The app owner needs to verify the HF_TOKEN in Streamlit Secrets."
+    if "503" in e or "loading" in e or "currently loading" in e:
+        return "The AI model is warming up. Please wait 30–60 seconds and try again."
+    if "429" in e or "rate limit" in e or "quota" in e:
+        return "Request limit reached. Please wait a moment and try again."
+    if "413" in e or "too large" in e or "payload" in e:
+        return "The image is too large. Please use a smaller or lower-resolution photo."
+    if "timeout" in e or "timed out" in e:
+        return "The request timed out. The free tier can be slow — please try again."
+    return f"Something went wrong. Please try again. ({err[:120]})"
 
-# ══ LEFT COLUMN ════════════════════════════════════════════════════════════════
-with col_left:
-    st.markdown('<div class="section-label">Upload Item</div>', unsafe_allow_html=True)
-    uploaded_file = st.file_uploader(
-        "Upload clothing image",
-        type=["jpg", "jpeg", "png"],
-        label_visibility="collapsed",
+
+def _build_prompt(price: float, mode: str) -> str:
+    """Build the vision-language instruction prompt sent directly with the image."""
+
+    base = (
+        f"You are a professional thrift store expert and fashion stylist. "
+        f"Carefully examine the clothing item in this image. "
+        f"The asking price is ${price:.2f}.\n\n"
     )
-
-    if uploaded_file:
-        image = Image.open(uploaded_file).convert("RGB")
-        st.image(image, use_container_width=True)
-        w, h = image.size
-        st.markdown(
-            f'<div style="font-size:0.7em;letter-spacing:0.1em;color:#3d3a30;'
-            f'text-transform:uppercase;margin-top:6px;">{w} × {h} px</div>',
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown("""
-        <div class="upload-placeholder">
-            <div class="upload-icon">◻</div>
-            <div>Drag & drop or click to browse</div>
-            <div class="upload-hint">JPG · JPEG · PNG</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-
-    st.markdown('<div class="section-label">Price</div>', unsafe_allow_html=True)
-    price = st.number_input(
-        "Price ($)",
-        min_value=0.0,
-        value=10.0,
-        step=0.5,
-        format="%.2f",
-        label_visibility="collapsed",
-    )
-
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-    st.markdown('<div class="section-label">Mode</div>', unsafe_allow_html=True)
-    mode = st.selectbox(
-        "Analysis mode",
-        ["Full Analysis", "Quick Verdict", "Outfit Ideas"],
-        label_visibility="collapsed",
-    )
-
-    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
-    analyze = st.button("Analyze Item")
-
-# ══ RIGHT COLUMN ═══════════════════════════════════════════════════════════════
-with col_right:
-    st.markdown('<div class="section-label">Analysis</div>', unsafe_allow_html=True)
-
-    # ── Idle state ─────────────────────────────────────────────────────────────
-    if not uploaded_file:
-        st.markdown("""
-        <div class="result-empty">
-            <div class="result-empty-icon">◻</div>
-            <div class="result-empty-text">Upload an image to begin</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ── Waiting for click ──────────────────────────────────────────────────────
-    elif not analyze:
-        st.markdown("""
-        <div class="result-empty">
-            <div class="result-empty-icon">→</div>
-            <div class="result-empty-text">Click Analyze Item to continue</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # ── Run analysis ───────────────────────────────────────────────────────────
-    else:
-        client = InferenceClient(token=HF_TOKEN)
-
-        # ── Step 1 of 2: Image captioning via BLIP ─────────────────────────
-        step1 = st.empty()
-        step1.markdown('<div class="step-indicator">Step 1 / 2 — Reading image…</div>', unsafe_allow_html=True)
-
-        try:
-            buf = io.BytesIO()
-            img = image.copy()
-            if img.width > 768 or img.height > 768:
-                img.thumbnail((768, 768), Image.LANCZOS)
-            img.save(buf, format="JPEG", quality=85)
-            image_bytes = buf.getvalue()
-
-            caption_result = client.image_to_text(
-                image=image_bytes,
-                model=CAPTION_MODEL,
-            )
-            # InferenceClient returns a string or ImageToTextOutput object
-            if hasattr(caption_result, "generated_text"):
-                caption = caption_result.generated_text
-            else:
-                caption = str(caption_result)
-
-        except Exception as e:
-            step1.empty()
-            err = str(e)
-            _friendly = _map_error(err)
-            st.markdown(f'<div class="err-box">{_friendly}</div>', unsafe_allow_html=True)
-            st.stop()
-
-        # ── Step 2 of 2: LLM analysis via Mistral ─────────────────────────
-        step1.markdown('<div class="step-indicator">Step 2 / 2 — Analysing…</div>', unsafe_allow_html=True)
-
-        try:
-            prompt = _build_prompt(caption, price, mode)
-
-            llm_response = client.text_generation(
-                prompt=prompt,
-                model=ANALYSIS_MODEL,
-                max_new_tokens=480,
-                temperature=0.4,
-                repetition_penalty=1.1,
-                stop_sequences=["</s>", "[/INST]", "###"],
-            )
-
-            raw_text = llm_response.strip()
-
-        except Exception as e:
-            step1.empty()
-            err = str(e)
-            st.markdown(f'<div class="err-box">{_map_error(err)}</div>', unsafe_allow_html=True)
-            st.stop()
-
-        step1.empty()
-
-        # ── Parse and render results ───────────────────────────────────────
-        _render_results(caption, raw_text, price, mode)
-
-
-# ── Helper functions ───────────────────────────────────────────────────────────
-
-def _build_prompt(caption: str, price: float, mode: str) -> str:
-    """Build the Mistral instruction prompt."""
-
-    base = f"""[INST] You are a professional thrift store expert and fashion stylist.
-
-A customer found a clothing item described as: "{caption}"
-The asking price is ${price:.2f}.
-
-"""
 
     if mode == "Quick Verdict":
-        base += """Respond in this EXACT format and nothing else:
-
-ITEM: [item name]
-CONDITION: [Excellent / Good / Fair / Poor]
-FAIR VALUE: $[low]–$[high]
-VERDICT: [BUY / PASS / NEGOTIATE]
-REASON: [One honest sentence]
-[/INST]"""
+        base += (
+            "Respond in this EXACT format and nothing else:\n\n"
+            "ITEM: [item name]\n"
+            "CONDITION: [Excellent / Good / Fair / Poor]\n"
+            "FAIR VALUE: $[low]–$[high]\n"
+            "VERDICT: [BUY / PASS / NEGOTIATE]\n"
+            "REASON: [One honest sentence]"
+        )
 
     elif mode == "Outfit Ideas":
-        base += """Give 4 creative outfit ideas. Respond in this EXACT format:
-
-ITEM: [item name]
-OUTFIT 1 ([occasion]): [specific pieces to pair with it]
-OUTFIT 2 ([occasion]): [specific pieces to pair with it]
-OUTFIT 3 ([occasion]): [specific pieces to pair with it]
-OUTFIT 4 ([occasion]): [specific pieces to pair with it]
-[/INST]"""
+        base += (
+            "Give 4 creative outfit ideas for this item. "
+            "Respond in this EXACT format and nothing else:\n\n"
+            "ITEM: [item name]\n"
+            "OUTFIT 1 ([occasion]): [specific pieces to pair with it]\n"
+            "OUTFIT 2 ([occasion]): [specific pieces to pair with it]\n"
+            "OUTFIT 3 ([occasion]): [specific pieces to pair with it]\n"
+            "OUTFIT 4 ([occasion]): [specific pieces to pair with it]"
+        )
 
     else:  # Full Analysis
-        base += """Respond in this EXACT format and nothing else:
-
-ITEM: [item name and brief descriptor]
-MATERIAL: [estimated fabric / material]
-CONDITION: [Excellent / Good / Fair / Poor — one-line reason]
-ERA / STYLE: [decade or aesthetic, e.g. 90s denim, minimalist, Y2K]
-FAIR VALUE: $[low]–$[high]
-RESALE: [High / Medium / Low — one reason]
-OUTFIT 1 (Casual): [specific combo]
-OUTFIT 2 (Smart Casual): [specific combo]
-OUTFIT 3 (Going Out): [specific combo]
-SUSTAINABILITY: [one eco benefit of buying this secondhand]
-VERDICT: [BUY / PASS / NEGOTIATE]
-REASON: [2 direct honest sentences — no fluff]
-[/INST]"""
+        base += (
+            "Respond in this EXACT format and nothing else:\n\n"
+            "ITEM: [item name and brief descriptor]\n"
+            "MATERIAL: [estimated fabric / material]\n"
+            "CONDITION: [Excellent / Good / Fair / Poor — one-line reason]\n"
+            "ERA / STYLE: [decade or aesthetic, e.g. 90s denim, minimalist, Y2K]\n"
+            "FAIR VALUE: $[low]–$[high]\n"
+            "RESALE: [High / Medium / Low — one reason]\n"
+            "OUTFIT 1 (Casual): [specific combo]\n"
+            "OUTFIT 2 (Smart Casual): [specific combo]\n"
+            "OUTFIT 3 (Going Out): [specific combo]\n"
+            "SUSTAINABILITY: [one eco benefit of buying this secondhand]\n"
+            "VERDICT: [BUY / PASS / NEGOTIATE]\n"
+            "REASON: [2 direct honest sentences — no fluff]"
+        )
 
     return base
 
 
-def _render_results(caption: str, raw: str, price: float, mode: str):
+def _render_results(raw: str, price: float, mode: str):
     """Parse the LLM output and render it as structured UI."""
 
     lines = {}
@@ -534,35 +406,175 @@ def _render_results(caption: str, raw: str, price: float, mode: str):
             if v_label == "Buy":
                 st.balloons()
 
-    # ── Caption debug (collapsed) ─────────────────────────────────────────
-    with st.expander("View raw image caption", expanded=False):
+    # ── Raw model output (collapsed) ─────────────────────────────────────────
+    with st.expander("View raw model output", expanded=False):
         st.markdown(
-            f'<div style="font-size:0.8em;color:#6b6454;font-style:italic;">{caption}</div>',
+            f'<div style="font-size:0.8em;color:#6b6454;font-style:italic;white-space:pre-wrap;">{raw}</div>',
             unsafe_allow_html=True
         )
 
 
-def _map_error(err: str) -> str:
-    """Convert raw exceptions into clean user-facing messages."""
-    e = err.lower()
-    if "401" in e or "unauthorized" in e:
-        return "Authentication failed. The app owner needs to verify the HF_TOKEN in Streamlit Secrets."
-    if "503" in e or "loading" in e or "currently loading" in e:
-        return "The AI model is warming up. Please wait 30–60 seconds and try again."
-    if "429" in e or "rate limit" in e or "quota" in e:
-        return "Request limit reached. Please wait a moment and try again."
-    if "413" in e or "too large" in e or "payload" in e:
-        return "The image is too large. Please use a smaller or lower-resolution photo."
-    if "timeout" in e or "timed out" in e:
-        return "The request timed out. The free tier can be slow — please try again."
-    return f"Something went wrong. Please try again. ({err[:120]})"
+# ══════════════════════════════════════════════════════════════════════════════
+# ── UI starts here (helper functions are now safely defined above) ────────────
+# ══════════════════════════════════════════════════════════════════════════════
 
+# ── Header ─────────────────────────────────────────────────────────────────────
+st.markdown("""
+<div class="thrift-header">
+    <div class="thrift-wordmark">Thrift<span>Scan</span> AI</div>
+    <div class="thrift-sub">Intelligent Clothing Analysis</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ── Layout ─────────────────────────────────────────────────────────────────────
+col_left, col_right = st.columns([1, 1.35], gap="large")
+
+# ══ LEFT COLUMN ════════════════════════════════════════════════════════════════
+with col_left:
+    st.markdown('<div class="section-label">Upload Item</div>', unsafe_allow_html=True)
+    uploaded_file = st.file_uploader(
+        "Upload clothing image",
+        type=["jpg", "jpeg", "png"],
+        label_visibility="collapsed",
+    )
+
+    if uploaded_file:
+        image = Image.open(uploaded_file).convert("RGB")
+        st.image(image, use_container_width=True)
+        w, h = image.size
+        st.markdown(
+            f'<div style="font-size:0.7em;letter-spacing:0.1em;color:#3d3a30;'
+            f'text-transform:uppercase;margin-top:6px;">{w} × {h} px</div>',
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown("""
+        <div class="upload-placeholder">
+            <div class="upload-icon">◻</div>
+            <div>Drag & drop or click to browse</div>
+            <div class="upload-hint">JPG · JPEG · PNG</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label">Price</div>', unsafe_allow_html=True)
+    price = st.number_input(
+        "Price ($)",
+        min_value=0.0,
+        value=10.0,
+        step=0.5,
+        format="%.2f",
+        label_visibility="collapsed",
+    )
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label">Mode</div>', unsafe_allow_html=True)
+    mode = st.selectbox(
+        "Analysis mode",
+        ["Full Analysis", "Quick Verdict", "Outfit Ideas"],
+        label_visibility="collapsed",
+    )
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    analyze = st.button("Analyze Item")
+
+# ══ RIGHT COLUMN ═══════════════════════════════════════════════════════════════
+with col_right:
+    st.markdown('<div class="section-label">Analysis</div>', unsafe_allow_html=True)
+
+    # ── Idle state ─────────────────────────────────────────────────────────────
+    if not uploaded_file:
+        st.markdown("""
+        <div class="result-empty">
+            <div class="result-empty-icon">◻</div>
+            <div class="result-empty-text">Upload an image to begin</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Waiting for click ──────────────────────────────────────────────────────
+    elif not analyze:
+        st.markdown("""
+        <div class="result-empty">
+            <div class="result-empty-icon">→</div>
+            <div class="result-empty-text">Click Analyze Item to continue</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # ── Run analysis ───────────────────────────────────────────────────────────
+    else:
+        client = InferenceClient(token=HF_TOKEN)
+
+        # ── Prepare image (resize + base64 encode) ──────────────────────────
+        step1 = st.empty()
+        step1.markdown('<div class="step-indicator">Analysing image…</div>', unsafe_allow_html=True)
+
+        try:
+            buf = io.BytesIO()
+            img = image.copy()
+            if img.width > 768 or img.height > 768:
+                img.thumbnail((768, 768), Image.LANCZOS)
+            img.save(buf, format="JPEG", quality=85)
+            b64_image = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+        except Exception as e:
+            step1.empty()
+            st.markdown(f'<div class="err-box">{_map_error(str(e))}</div>', unsafe_allow_html=True)
+            st.stop()
+
+        # ── Single VLM call: image + instruction → structured output ────────
+        try:
+            prompt = _build_prompt(price, mode)
+
+            response = client.chat.completions.create(
+                model=VLM_MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a professional thrift store expert and fashion stylist. "
+                            "Always respond strictly in the structured format requested. "
+                            "Do not add any extra commentary, preamble, or markdown."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{b64_image}"
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt,
+                            },
+                        ],
+                    },
+                ],
+                max_tokens=600,
+                temperature=0.4,
+            )
+
+            raw_text = response.choices[0].message.content.strip()
+
+        except Exception as e:
+            step1.empty()
+            st.markdown(f'<div class="err-box">{_map_error(str(e))}</div>', unsafe_allow_html=True)
+            st.stop()
+
+        step1.empty()
+
+        # ── Parse and render results ───────────────────────────────────────
+        _render_results(raw_text, price, mode)
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown("<div style='height:48px'></div>", unsafe_allow_html=True)
 st.markdown("""
 <div style="text-align:center; font-size:0.68em; letter-spacing:0.2em;
 text-transform:uppercase; color:#2a2618; padding-bottom:24px;">
-    ThriftScan AI &nbsp;·&nbsp; BLIP + Mistral &nbsp;·&nbsp; Free Tier
+    ThriftScan AI &nbsp;·&nbsp; Qwen2-VL &nbsp;·&nbsp; Free Tier
 </div>
 """, unsafe_allow_html=True)
