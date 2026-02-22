@@ -492,7 +492,7 @@ with col_right:
             img_bytes = buf.getvalue()
 
             # Execute Gemini analysis
-            model = genai.GenerativeModel("gemini-1.5-flash-latest")
+            model = genai.GenerativeModel("models/gemini-1.5-flash")
             prompt = _build_prompt(price, mode)
 
             response = model.generate_content(
