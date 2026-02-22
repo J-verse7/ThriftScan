@@ -179,7 +179,8 @@ with col_right:
             img_resized.save(buf, format="JPEG")
             
             # Using the direct model string which works best with configured API keys
-            model = genai.GenerativeModel(model_name="gemini-1.5-flash")
+            # Force use of the base model path to bypass the v1beta 404 error
+            model = genai.GenerativeModel("models/gemini-1.5-flash")
             
             response = model.generate_content([
                 _build_prompt(price, mode),
