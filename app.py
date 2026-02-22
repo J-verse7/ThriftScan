@@ -3,7 +3,6 @@ import google.generativeai as genai
 from PIL import Image
 import io
 
-
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="ThriftScan AI",
@@ -14,15 +13,13 @@ st.set_page_config(
 
 # ── Secure token load ──────────────────────────────────────────────────────────
 try:
+    # Changed to GEMINI_API_KEY to match your new setup
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 except Exception:
     st.error("GEMINI_API_KEY missing in Streamlit Secrets.")
     st.stop()
 
 genai.configure(api_key=GEMINI_API_KEY)
-
-# ── Model ──────────────────────────────────────────────────────────────────────
-#    # Single vision-language model: image + text → structured output
 
 # ── CSS ────────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -174,8 +171,8 @@ html, body, [class*="css"] {
     align-items: center;
     gap: 20px;
 }
-.verdict-buy    { background: #0a1a0e; border: 1px solid #1e4028; }
-.verdict-pass   { background: #1a0a0a; border: 1px solid #40201e; }
+.verdict-buy     { background: #0a1a0e; border: 1px solid #1e4028; }
+.verdict-pass    { background: #1a0a0a; border: 1px solid #40201e; }
 .verdict-negotiate { background: #141008; border: 1px solid #3d2c10; }
 
 .verdict-label {
@@ -185,8 +182,8 @@ html, body, [class*="css"] {
     letter-spacing: 0.08em;
     line-height: 1;
 }
-.verdict-buy .verdict-label    { color: #4caf72; }
-.verdict-pass .verdict-label   { color: #c4504a; }
+.verdict-buy .verdict-label     { color: #4caf72; }
+.verdict-pass .verdict-label    { color: #c4504a; }
 .verdict-negotiate .verdict-label { color: #c49440; }
 
 .verdict-sub {
@@ -238,33 +235,23 @@ hr { border-color: #1a1910 !important; margin: 24px 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-# ── Helper functions  (MUST be defined before they are called below) ──────────
-# ══════════════════════════════════════════════════════════════════════════════
+# ── Helper functions ──────────────────────────────────────────────────────────
 
 def _map_error(err: str) -> str:
-    """Convert raw exceptions into clean user-facing messages."""
-    e = err.lower()
-    if "401" in e or "unauthorized" in e:
-        return "Authentication failed. The app owner needs to verify the HF_TOKEN in Streamlit Secrets."
-    if "503" in e or "loading" in e or "currently loading" in e:
-        return "The AI model is warming up. Please wait 30–60 seconds and try again."
-    if "429" in e or "rate limit" in e or "quota" in e:
-        return "Request limit reached. Please wait a moment and try again."
-    if "413" in e or "too large" in e or "payload" in e:
-        return "The image is too large. Please use a smaller or lower-resolution photo."
-    if "timeout" in e or "timed out" in e:
-        return "The request timed out. The free tier can be slow — please try again."
-    return f"Something went wrong. Please try again. ({err[:120]})"
+    e = str(err).lower()
+    if "api_key" in e or "401" in e:
+        return "Invalid Gemini API Key. Please update your Streamlit Secrets."
+    if "quota" in e or "429" in e:
+        return "API Quota exceeded. Please try again in a few minutes."
+    return f"Something went wrong. ({err[:120]})"
 
 
 def _build_prompt(price: float, mode: str) -> str:
-    """Build the vision-language instruction prompt sent directly with the image."""
-
+    # Changed currency context to Indian Rupees (₹)
     base = (
-        f"You are a professional thrift store expert and fashion stylist. "
+        f"You are a professional thrift store expert and fashion stylist in India. "
         f"Carefully examine the clothing item in this image. "
-        f"The asking price is ${price:.2f}.\n\n"
+        f"The asking price is ₹{price:.2f}.\n\n"
     )
 
     if mode == "Quick Verdict":
@@ -272,7 +259,7 @@ def _build_prompt(price: float, mode: str) -> str:
             "Respond in this EXACT format and nothing else:\n\n"
             "ITEM: [item name]\n"
             "CONDITION: [Excellent / Good / Fair / Poor]\n"
-            "FAIR VALUE: $[low]–$[high]\n"
+            "FAIR VALUE: ₹[low]–₹[high]\n"
             "VERDICT: [BUY / PASS / NEGOTIATE]\n"
             "REASON: [One honest sentence]"
         )
@@ -295,7 +282,7 @@ def _build_prompt(price: float, mode: str) -> str:
             "MATERIAL: [estimated fabric / material]\n"
             "CONDITION: [Excellent / Good / Fair / Poor — one-line reason]\n"
             "ERA / STYLE: [decade or aesthetic, e.g. 90s denim, minimalist, Y2K]\n"
-            "FAIR VALUE: $[low]–$[high]\n"
+            "FAIR VALUE: ₹[low]–₹[high]\n"
             "RESALE: [High / Medium / Low — one reason]\n"
             "OUTFIT 1 (Casual): [specific combo]\n"
             "OUTFIT 2 (Smart Casual): [specific combo]\n"
@@ -309,15 +296,12 @@ def _build_prompt(price: float, mode: str) -> str:
 
 
 def _render_results(raw: str, price: float, mode: str):
-    """Parse the LLM output and render it as structured UI."""
-
     lines = {}
     for line in raw.splitlines():
         if ":" in line:
             key, _, val = line.partition(":")
             lines[key.strip().upper()] = val.strip()
 
-    # ── Structured rows ─────────────────────────────────────────────────
     row_keys = {
         "Full Analysis":  ["ITEM", "MATERIAL", "CONDITION", "ERA / STYLE", "FAIR VALUE", "RESALE"],
         "Quick Verdict":  ["ITEM", "CONDITION", "FAIR VALUE"],
@@ -338,7 +322,6 @@ def _render_results(raw: str, price: float, mode: str):
                 <div class="{val_class}">{val}</div>
             </div>"""
 
-    # ── Outfit rows ─────────────────────────────────────────────────────
     outfit_html = ""
     for i in range(1, 5):
         key = f"OUTFIT {i}"
@@ -349,7 +332,6 @@ def _render_results(raw: str, price: float, mode: str):
                 <div class="result-val">{lines[key]}</div>
             </div>"""
 
-    # ── Sustainability ───────────────────────────────────────────────────
     sustain_html = ""
     if mode == "Full Analysis" and "SUSTAINABILITY" in lines:
         sustain_html = f"""
@@ -364,26 +346,24 @@ def _render_results(raw: str, price: float, mode: str):
             unsafe_allow_html=True,
         )
     else:
-        # Fallback: show raw text
         st.markdown(
             f'<div class="panel"><div class="result-val" style="white-space:pre-wrap;">{raw}</div></div>',
             unsafe_allow_html=True,
         )
 
-    # ── Verdict card ─────────────────────────────────────────────────────
     if mode != "Outfit Ideas":
         verdict_raw = lines.get("VERDICT", "").upper()
         reason = lines.get("REASON", "")
 
         if "BUY" in verdict_raw and "PASS" not in verdict_raw:
-            v_class, v_label, v_sub = "verdict-buy", "Buy", f"${price:.2f} is a good deal."
+            v_class, v_label, v_sub = "verdict-buy", "Buy", f"₹{price:.2f} is a good deal."
         elif "PASS" in verdict_raw:
-            v_class, v_label, v_sub = "verdict-pass", "Pass", f"Not worth ${price:.2f} — walk away."
+            v_class, v_label, v_sub = "verdict-pass", "Pass", f"Not worth ₹{price:.2f} — walk away."
         elif "NEGOTIATE" in verdict_raw:
             suggest = round(price * 0.65, 2)
             v_class  = "verdict-negotiate"
             v_label  = "Negotiate"
-            v_sub    = f"Try to bring it down to ${suggest:.2f}."
+            v_sub    = f"Try to bring it down to ₹{suggest:.2f}."
         else:
             v_class = v_label = v_sub = ""
 
@@ -405,17 +385,11 @@ def _render_results(raw: str, price: float, mode: str):
             if v_label == "Buy":
                 st.balloons()
 
-    # ── Raw model output (collapsed) ─────────────────────────────────────────
     with st.expander("View raw model output", expanded=False):
         st.markdown(
             f'<div style="font-size:0.8em;color:#6b6454;font-style:italic;white-space:pre-wrap;">{raw}</div>',
             unsafe_allow_html=True
         )
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# ── UI starts here (helper functions are now safely defined above) ────────────
-# ══════════════════════════════════════════════════════════════════════════════
 
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -457,12 +431,12 @@ with col_left:
 
     st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-    st.markdown('<div class="section-label">Price</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-label">Price (₹)</div>', unsafe_allow_html=True)
     price = st.number_input(
-        "Price ($)",
+        "Price (₹)",
         min_value=0.0,
-        value=10.0,
-        step=0.5,
+        value=500.0,
+        step=50.0,
         format="%.2f",
         label_visibility="collapsed",
     )
@@ -483,7 +457,6 @@ with col_left:
 with col_right:
     st.markdown('<div class="section-label">Analysis</div>', unsafe_allow_html=True)
 
-    # ── Idle state ─────────────────────────────────────────────────────────────
     if not uploaded_file:
         st.markdown("""
         <div class="result-empty">
@@ -492,7 +465,6 @@ with col_right:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Waiting for click ──────────────────────────────────────────────────────
     elif not analyze:
         st.markdown("""
         <div class="result-empty">
@@ -501,64 +473,53 @@ with col_right:
         </div>
         """, unsafe_allow_html=True)
 
-    # ── Run analysis ───────────────────────────────────────────────────────────
     else:
-        client = InferenceClient(token=HF_TOKEN)
-
-        # ── Prepare image (resize + base64 encode) ──────────────────────────
+        # Define step1 inside the block where it is used to avoid NameError
         step1 = st.empty()
-        step1.markdown('<div class="step-indicator">Analysing image…</div>', unsafe_allow_html=True)
+        step1.markdown(
+            '<div class="step-indicator">Analysing image…</div>',
+            unsafe_allow_html=True
+        )
 
         try:
+            # Prepare image buffer
             buf = io.BytesIO()
-            img = image.copy()
-            if img.width > 768 or img.height > 768:
-                img.thumbnail((768, 768), Image.LANCZOS)
-            img.save(buf, format="JPEG", quality=85)
-            b64_image = base64.b64encode(buf.getvalue()).decode("utf-8")
+            img_to_send = image.copy()
+            if img_to_send.width > 768 or img_to_send.height > 768:
+                img_to_send.thumbnail((768, 768), Image.LANCZOS)
+            img_to_send.save(buf, format="JPEG", quality=85)
+            
+            img_bytes = buf.getvalue()
+
+            # Execute Gemini analysis
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            prompt = _build_prompt(price, mode)
+
+            response = model.generate_content(
+                [
+                    prompt,
+                    {
+                        "mime_type": "image/jpeg",
+                        "data": img_bytes,
+                    },
+                ],
+                generation_config={
+                    "temperature": 0.4,
+                    "max_output_tokens": 600,
+                },
+            )
+
+            raw_text = response.text
+            step1.empty()
+            _render_results(raw_text, price, mode)
 
         except Exception as e:
             step1.empty()
-            st.markdown(f'<div class="err-box">{_map_error(str(e))}</div>', unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="err-box">{_map_error(str(e))}</div>',
+                unsafe_allow_html=True,
+            )
             st.stop()
-
-        # ── Single VLM call: image + instruction → structured output ────────
-        # ── Single VLM call: image + instruction → structured output ────────
-try:
-    prompt = _build_prompt(price, mode)
-
-    model = genai.GenerativeModel("gemini-1.5-flash")
-
-    img_bytes = buf.getvalue()
-
-    response = model.generate_content(
-        [
-            prompt,
-            {
-                "mime_type": "image/jpeg",
-                "data": img_bytes,
-            },
-        ],
-        generation_config={
-            "temperature": 0.4,
-            "max_output_tokens": 600,
-        },
-    )
-
-    raw_text = response.text
-
-except Exception as e:
-    step1.empty()
-    st.markdown(
-        f'<div class="err-box">{_map_error(str(e))}</div>',
-        unsafe_allow_html=True,
-    )
-    st.stop()
-
-    step1.empty()
-
-        # ── Parse and render results ───────────────────────────────────────
-    _render_results(raw_text, price, mode)
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
 st.markdown("<div style='height:48px'></div>", unsafe_allow_html=True)
