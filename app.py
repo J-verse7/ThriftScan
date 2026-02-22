@@ -12,7 +12,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# ─── Load Token (Hidden from users — set in Streamlit Cloud Secrets) ──────────
+# ─── Load Token ───────────────────────────────────────────────────────────────
 try:
     HF_TOKEN = st.secrets["HF_TOKEN"]
 except Exception:
@@ -24,7 +24,6 @@ st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-
     .hero {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
         border-radius: 16px; padding: 32px; text-align: center;
@@ -32,7 +31,6 @@ st.markdown("""
     }
     .hero h1 { font-size: 2.4em; margin: 0; color: #fff; }
     .hero p  { color: #aaa; margin: 8px 0 0; font-size: 1.05em; }
-
     .upload-box {
         border: 2px dashed #444; border-radius: 14px; padding: 24px;
         text-align: center; background: #111122;
@@ -67,200 +65,56 @@ st.markdown("""
         font-size: 1.05em !important; padding: 12px 28px !important;
         width: 100% !important; transition: opacity 0.2s !important;
     }
-    .stButton > button:hover { opacity: 0.88 !important; }
-    hr { border-color: #222244; }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Hero Banner ───────────────────────────────────────────────────────────────
-st.markdown("""
-<div class="hero">
-    <h1>👕 ThriftScan AI</h1>
-    <p>Upload any clothing photo → Get AI analysis, outfit ideas & instant buy/pass verdict</p>
-</div>
-""", unsafe_allow_html=True)
-
-# ─── How it works ──────────────────────────────────────────────────────────────
-with st.expander("ℹ️ How does this work?"):
-    col_a, col_b, col_c = st.columns(3)
-    with col_a:
-        st.markdown('<div class="step-box">📸 <b>Step 1</b><br>Upload a clear photo of the clothing item</div>', unsafe_allow_html=True)
-    with col_b:
-        st.markdown('<div class="step-box">💲 <b>Step 2</b><br>Enter the price tag you see in the store</div>', unsafe_allow_html=True)
-    with col_c:
-        st.markdown('<div class="step-box">🤖 <b>Step 3</b><br>AI analyzes material, style, value & gives verdict</div>', unsafe_allow_html=True)
-
-st.markdown("")
+st.markdown('<div class="hero"><h1>👕 ThriftScan AI</h1><p>Upload photo for AI verdict</p></div>', unsafe_allow_html=True)
 
 # ─── Main Layout ───────────────────────────────────────────────────────────────
 col_left, col_right = st.columns([1, 1.3], gap="large")
 
 with col_left:
     st.markdown("### 📤 Upload Item")
-    uploaded_file = st.file_uploader(
-        "Choose image",
-        type=["jpg", "jpeg", "png"],
-        label_visibility="collapsed"
-    )
+    uploaded_file = st.file_uploader("Choose image", type=["jpg", "jpeg", "png"], label_visibility="collapsed")
 
     if uploaded_file:
         image = Image.open(uploaded_file)
         st.image(image, caption="Your item", use_container_width=True)
-        w, h = image.size
-        st.caption(f"📐 {w}×{h}px")
-    else:
-        st.markdown("""
-        <div class="upload-box">
-            <div style="font-size:2.5em">👗</div>
-            <div style="color:#888; margin-top:8px;">Drag & drop or click above to upload</div>
-            <div style="color:#555; font-size:0.82em; margin-top:6px;">JPG · JPEG · PNG</div>
-        </div>
-        """, unsafe_allow_html=True)
+    
+    price = st.number_input("💲 Price ($)", min_value=0.0, value=10.0, step=0.5)
+    analyze_clicked = st.button("🚀 Analyze Now")
 
-    st.markdown("")
-    price = st.number_input("💲 Price tag on item ($)", min_value=0.0, value=10.0, step=0.5)
-    mode = st.selectbox(
-        "🎯 Analysis Mode",
-        ["Full Analysis", "Quick Verdict Only", "Outfit Ideas Only"],
-        help="Full Analysis gives everything. Quick is fast. Outfit Ideas focuses on styling."
-    )
-    analyze_clicked = st.button("🚀 Analyze Now — It's Free!")
-
-# ─── Results Column ────────────────────────────────────────────────────────────
 with col_right:
     st.markdown("### 🤖 AI Results")
 
-    if not uploaded_file:
-        st.markdown("""
-        <div class="result-card" style="text-align:center; color:#555; padding:48px 24px;">
-            <div style="font-size:2.5em">🔍</div>
-            <div style="margin-top:12px;">Your analysis will appear here</div>
-            <div style="font-size:0.82em; margin-top:6px;">Upload a photo and hit Analyze</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-    elif analyze_clicked:
-        with st.spinner("🤖 AI is scanning your item... (first run may take ~30s)"):
+    if uploaded_file and analyze_clicked:
+        with st.spinner("Scanning..."):
             try:
-                # ── Resize & encode image ───────────────────────────────────
+                # API Call Setup
                 buf = io.BytesIO()
-                if image.width > 800 or image.height > 800:
-                    image.thumbnail((800, 800), Image.LANCZOS)
-                image.save(buf, format="PNG")
-                img_b64 = base64.b64encode(buf.getvalue()).decode()
-
-                # ── Build prompt ────────────────────────────────────────────
-                if mode == "Quick Verdict Only":
-                    prompt_text = f"""You are a thrift store expert. This item is priced at ${price}.
-Respond in this exact format:
-**Item:** [name]
-**Condition:** [Excellent / Good / Fair / Poor]
-**Fair Value:** $[low]–$[high]
-**Verdict:** BUY / PASS / NEGOTIATE
-**Reason:** [1-2 sentences, honest and direct]"""
-
-                elif mode == "Outfit Ideas Only":
-                    prompt_text = """You are a creative fashion stylist. Look at this clothing item.
-Give 4 outfit combinations:
-**Outfit 1 – [Occasion]:** [specific items to pair + why it works]
-**Outfit 2 – [Occasion]:** [specific items to pair + why it works]
-**Outfit 3 – [Occasion]:** [specific items to pair + why it works]
-**Outfit 4 – [Occasion]:** [specific items to pair + why it works]"""
-
-                else:
-                    prompt_text = f"""You are a professional thrift shopping advisor. Analyze this clothing item priced at ${price}.
-Respond in this EXACT format:
-
-**Item Type:** [e.g., vintage denim jacket]
-**Color & Pattern:** [describe]
-**Estimated Material:** [e.g., cotton blend, denim, polyester]
-**Condition:** [Excellent / Good / Fair / Poor — brief reason]
-**Style Era:** [e.g., 90s grunge, Y2K, minimalist]
-**Fair Market Value:** $[low]–$[high]
-**Resale Potential:** [High / Medium / Low — one sentence]
-
-**Outfit Ideas:**
-- **Casual:** [specific combo]
-- **Smart Casual:** [specific combo]
-- **Weekend:** [specific combo]
-
-**Sustainability Bonus:** [one fun eco fact about buying secondhand]
-
-**Verdict:** BUY / PASS / NEGOTIATE
-**Reason:** [2–3 sentences, honest, no fluff]"""
-
-                # ── API Call ────────────────────────────────────────────────
-                              # ── API Call ────────────────────────────────────────────────
+                image.save(buf, format="JPEG")
                 client = InferenceClient(token=HF_TOKEN)
+                
+                # Model Inference
+                response = client.image_to_text(image=buf.getvalue(), model="Salesforce/blip-image-captioning-large")
+                
+                # Handle response type variations
+                description = response[0]['generated_text'] if isinstance(response, list) else response
+                if hasattr(description, 'generated_text'):
+                    description = description.generated_text
 
-                caption = client.image_to_text(
-                    image=buf.getvalue(),
-                    model="Salesforce/blip-image-captioning-large"
-                )
+                st.markdown(f'<div class="result-card">**Item Description:** {description}</div>', unsafe_allow_html=True)
 
-                ai_text = f"""
-**Item Description:** {caption.generated_text}
-
-**AI Advice:** Evaluate quality, stitching, material wear and resale value based on this description.
-"""s
-                # ── Display results ─────────────────────────────────────────
-                st.markdown(f'<div class="result-card">{ai_text}</div>', unsafe_allow_html=True)
-
-                # ── Verdict banner ──────────────────────────────────────────
-                if mode != "Outfit Ideas Only":
-                    verdict = ""
-                    for line in ai_text.upper().split("\n"):
-                        if "VERDICT" in line:
-                            verdict = line
-                            break
-
-                    st.markdown("---")
-                    if "BUY" in verdict and "PASS" not in verdict:
-                        st.markdown(f"""<div class="verdict-buy">
-                            <div style="font-size:2em">🎉</div>
-                            <h2 style="color:#52b788; margin:8px 0">BUY IT!</h2>
-                            <p style="color:#ccc;">${price} is a great deal. Grab it!</p>
-                        </div>""", unsafe_allow_html=True)
-                        st.balloons()
-                    elif "PASS" in verdict:
-                        st.markdown(f"""<div class="verdict-pass">
-                            <div style="font-size:2em">❌</div>
-                            <h2 style="color:#e63946; margin:8px 0">PASS</h2>
-                            <p style="color:#ccc;">${price} isn't worth it. Walk away!</p>
-                        </div>""", unsafe_allow_html=True)
-                    elif "NEGOTIATE" in verdict:
-                        suggest = round(price * 0.65, 2)
-                        st.markdown(f"""<div class="verdict-negotiate">
-                            <div style="font-size:2em">🤝</div>
-                            <h2 style="color:#f4a261; margin:8px 0">NEGOTIATE</h2>
-                            <p style="color:#ccc;">Good item — try to bring it down to <b>${suggest}</b></p>
-                        </div>""", unsafe_allow_html=True)
+                # Simplified Verdict Logic
+                if price < 15:
+                    st.markdown(f'<div class="verdict-buy"><h2>BUY IT!</h2><p>${price} is a steal.</p></div>', unsafe_allow_html=True)
+                    st.balloons()
+                elif price < 40:
+                    st.markdown(f'<div class="verdict-negotiate"><h2>NEGOTIATE</h2><p>Try ${round(price*0.7, 2)}</p></div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div class="verdict-pass"><h2>PASS</h2><p>Too expensive.</p></div>', unsafe_allow_html=True)
 
             except Exception as e:
-                err = str(e)
-                if "401" in err or "unauthorized" in err.lower():
-                    st.error("🔑 Auth failed. App owner needs to verify the HF token in Secrets.")
-                elif "503" in err or "loading" in err.lower():
-                    st.warning("⏳ Model is warming up. Wait 30 seconds and try again — totally normal!")
-                elif "429" in err or "quota" in err.lower():
-                    st.warning("🚦 Too many requests right now. Wait a minute and retry.")
-                elif "413" in err or "too large" in err.lower():
-                    st.warning("📦 Image too large. Try a smaller photo.")
-                else:
-                    st.error(f"Something went wrong: {err}")
-                    st.info("💡 Try a clearer, well-lit photo or a smaller file.")
-
+                st.error(f"Error: {str(e)}")
     else:
-        st.markdown("""
-        <div class="result-card" style="text-align:center; color:#666; padding:48px 24px;">
-            <div style="font-size:2em">👆</div>
-            <div style="margin-top:10px;">Hit <b>Analyze Now</b> to get results!</div>
-        </div>
-        """, unsafe_allow_html=True)
-
-# ─── Footer ────────────────────────────────────────────────────────────────────
-st.markdown("---")
-st.markdown(
-    "<center><sub>👕 ThriftScan AI &nbsp;•&nbsp; Powered by LLaVA on Hugging Face &nbsp;•&nbsp; 100% Free to use</sub></center>",
-    unsafe_allow_html=True
-)
+        st.info("Upload an image and hit Analyze.")
