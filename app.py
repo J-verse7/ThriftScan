@@ -121,8 +121,8 @@ with col_right:
             response = client.models.generate_content(
                 model="gemini-1.5-flash",
                 contents=[
-                    types.Part.from_text(_build_prompt(price_val, mode_val)),
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                  _build_prompt(price_val, mode_val),
+                   types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                 ]
             )
             status.empty()
