@@ -1,5 +1,6 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from PIL import Image
 import io
 
@@ -11,13 +12,12 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ── Secure token load ──────────────────────────────────────────────────────────
+# ── Secure API key load ────────────────────────────────────────────────────────
 if "GEMINI_API_KEY" not in st.secrets:
     st.error("GEMINI_API_KEY missing in Streamlit Secrets.")
     st.stop()
 
-# Configure the SDK
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 # ── CSS Styling ────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -47,10 +47,14 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; background-colo
 
 # ── Helper functions ──────────────────────────────────────────────────────────
 def _build_prompt(price: float, mode: str) -> str:
-    return (f"You are an expert thrift store analyst in India. Analyze this item. Asking price: ₹{price:.0f}. "
-            "Respond in EXACT format: ITEM: name, MATERIAL: fabric, CONDITION: level, ERA: style, "
-            "FAIR VALUE: ₹low-₹high, RESALE: level, OUTFIT 1: combo, OUTFIT 2: combo, SUSTAINABILITY: benefit, "
-            "VERDICT: BUY/PASS/NEGOTIATE, REASON: 2 short sentences.")
+    return (
+        f"You are an expert thrift store analyst in India. Analyze this clothing item. "
+        f"Asking price: ₹{price:.0f}. "
+        "Respond in EXACT format:\n"
+        "ITEM: name\nMATERIAL: fabric\nCONDITION: level\nERA: style\n"
+        "FAIR VALUE: ₹low-₹high\nRESALE: level\nOUTFIT 1: combo\nOUTFIT 2: combo\n"
+        "SUSTAINABILITY: benefit\nVERDICT: BUY/PASS/NEGOTIATE\nREASON: 2 short sentences."
+    )
 
 def _render_results(raw: str, price: float):
     lines = {}
@@ -58,17 +62,38 @@ def _render_results(raw: str, price: float):
         if ":" in line:
             key, _, val = line.partition(":")
             lines[key.strip().upper()] = val.strip()
+
     row_keys = ["ITEM", "MATERIAL", "CONDITION", "ERA", "FAIR VALUE", "RESALE", "OUTFIT 1", "OUTFIT 2", "SUSTAINABILITY"]
-    rows_html = "".join([f'<div class="result-row"><div class="result-key">{k.title()}</div><div class="result-val {"gold" if "VALUE" in k else ""}">{lines.get(k, "N/A")}</div></div>' for k in row_keys])
+    rows_html = ""
+    for k in row_keys:
+        gold_class = ' gold' if "VALUE" in k else ''
+        rows_html += f'<div class="result-row"><div class="result-key">{k.title()}</div><div class="result-val{gold_class}">{lines.get(k, "N/A")}</div></div>'
+
     st.markdown(f'<div class="panel">{rows_html}</div>', unsafe_allow_html=True)
+
     if "VERDICT" in lines:
         v = lines["VERDICT"].upper()
         v_class = "verdict-buy" if "BUY" in v else "verdict-pass" if "PASS" in v else "verdict-negotiate"
-        st.markdown(f'<div class="verdict-card {v_class}"><div class="verdict-label">{v}</div><div style="width:1px; height:40px; background:#2a2618; margin:0 20px;"></div><div class="verdict-reason" style="color:#b0a898; font-size:0.84em; flex:1;">{lines.get("REASON", "N/A")}</div></div>', unsafe_allow_html=True)
-        if "BUY" in v: st.balloons()
+        st.markdown(
+            f'<div class="verdict-card {v_class}">'
+            f'<div class="verdict-label">{v}</div>'
+            f'<div style="width:1px; height:40px; background:#2a2618; margin:0 20px;"></div>'
+            f'<div style="color:#b0a898; font-size:0.84em; flex:1;">{lines.get("REASON", "N/A")}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        if "BUY" in v:
+            st.balloons()
 
 # ── Main UI ────────────────────────────────────────────────────────────────────
-st.markdown('<div class="thrift-header"><div class="thrift-wordmark">Thrift<span>Scan</span> AI</div><div style="font-size:0.78em; color:#6b6454; margin-top:10px;">India Edition</div></div>', unsafe_allow_html=True)
+st.markdown(
+    '<div class="thrift-header">'
+    '<div class="thrift-wordmark">Thrift<span>Scan</span> AI</div>'
+    '<div style="font-size:0.78em; color:#6b6454; margin-top:10px;">India Edition · Prices in ₹</div>'
+    '</div>',
+    unsafe_allow_html=True
+)
+
 col_left, col_right = st.columns([1, 1.35], gap="large")
 
 with col_left:
@@ -91,14 +116,26 @@ with col_right:
         try:
             buf = io.BytesIO()
             image.save(buf, format="JPEG", quality=85)
-            # CRITICAL: Use gemini-2.0-flash to resolve the 404 version error
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content([_build_prompt(price_val, mode_val), {"mime_type": "image/jpeg", "data": buf.getvalue()}])
+            image_bytes = buf.getvalue()
+
+            response = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=[
+                    types.Part.from_text(_build_prompt(price_val, mode_val)),
+                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                ]
+            )
             status.empty()
             _render_results(response.text, price_val)
         except Exception as e:
             status.empty()
-            st.error(f"Error: {str(e)}")
+            st.markdown(f'<div class="err-box">Error: {str(e)}</div>', unsafe_allow_html=True)
 
 # ── Footer ─────────────────────────────────────────────────────────────────────
-st.markdown("<div style='height:48px'></div><div style='text-align:center; font-size:0.68em; color:#2a2618; padding-bottom:24px;'>ThriftScan AI · Gemini 2.0 Flash · Indian Market Logic</div>", unsafe_allow_html=True)
+st.markdown(
+    "<div style='height:48px'></div>"
+    "<div style='text-align:center; font-size:0.68em; color:#2a2618; padding-bottom:24px;'>"
+    "ThriftScan AI · Gemini 1.5 Flash · Indian Market Logic · Prices in ₹"
+    "</div>",
+    unsafe_allow_html=True
+)
