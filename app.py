@@ -1,6 +1,5 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from PIL import Image
 import io
 
@@ -10,7 +9,7 @@ if "GEMINI_API_KEY" not in st.secrets:
     st.error("GEMINI_API_KEY missing in Streamlit Secrets.")
     st.stop()
 
-client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
+genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 st.markdown("""
 <style>
@@ -41,7 +40,7 @@ html, body, [class*="css"] { font-family: 'DM Sans', sans-serif; background-colo
 def _build_prompt(price: float, mode: str) -> str:
     return (
         f"You are an expert thrift store analyst in India. Analyze this clothing item. "
-        f"The asking price is Rs.{price:.0f} (Indian Rupees). "
+        f"The asking price is Rs.{price:.0f} Indian Rupees. "
         "Respond in EXACT format:\n"
         "ITEM: name\nMATERIAL: fabric\nCONDITION: level\nERA: style\n"
         "FAIR VALUE: Rs.low-Rs.high\nRESALE: level\nOUTFIT 1: combo\nOUTFIT 2: combo\n"
@@ -103,13 +102,11 @@ with col_right:
             buf = io.BytesIO()
             image.save(buf, format="JPEG", quality=85)
             image_bytes = buf.getvalue()
-            response = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=[
-                    _build_prompt(price_val, mode_val),
-                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                ]
-            )
+            model = genai.GenerativeModel("gemini-1.5-flash")
+            response = model.generate_content([
+                _build_prompt(price_val, mode_val),
+                {"mime_type": "image/jpeg", "data": image_bytes}
+            ])
             status.empty()
             _render_results(response.text, price_val)
         except Exception as e:
