@@ -122,18 +122,3 @@ st.markdown(
     "ThriftScan AI · Gemini 1.5 Flash · Indian Market · Prices in Rs.</div>",
     unsafe_allow_html=True
 )
-```
-
----
-
-**Step 4** — Scroll down on GitHub, click **"Commit changes"** → **"Commit directly to main"** → **"Commit changes"**
-
-**Step 5** — Now go to:
-```
-https://github.com/J-verse7/ThriftScan/edit/main/requirements.txt
-```
-Select all, delete, paste this exactly:
-```
-streamlit
-google-genai>=1.5.0
-Pillow
