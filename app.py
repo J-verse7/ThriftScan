@@ -92,7 +92,7 @@ with col_right:
             buf = io.BytesIO()
             image.save(buf, format="JPEG", quality=85)
             # CRITICAL: Use gemini-2.0-flash to resolve the 404 version error
-            model = genai.GenerativeModel("gemini-2.0-flash")
+            model = genai.GenerativeModel("gemini-1.5-flash")
             response = model.generate_content([_build_prompt(price_val, mode_val), {"mime_type": "image/jpeg", "data": buf.getvalue()}])
             status.empty()
             _render_results(response.text, price_val)
