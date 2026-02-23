@@ -1,6 +1,5 @@
 import streamlit as st
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 from PIL import Image
 import io
 
@@ -118,15 +117,18 @@ with col_right:
             image.save(buf, format="JPEG", quality=85)
             image_bytes = buf.getvalue()
 
-            response = client.models.generate_content(
-               model="gemini-1.5-flash",
-                contents=[
-                  _build_prompt(price_val, mode_val),
-                   types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                ]
-            )
+            model = genai.GenerativeModel("gemini-1.5-flash")
+
+            response = model.generate_content([
+                _build_prompt(price_val, mode_val),
+                {
+                    "mime_type": "image/jpeg",
+                    "data": image_bytes
+                }
+            ])
+
             status.empty()
-            _render_results(response.text, price_val)
+            _render_results(response.text, price_val, mode_val)
         except Exception as e:
             status.empty()
             st.markdown(f'<div class="err-box">Error: {str(e)}</div>', unsafe_allow_html=True)
