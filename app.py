@@ -1,7 +1,7 @@
 import streamlit as st
-import google.generativeai as genai
+import requests
 from PIL import Image
-import io
+import io, base64
 
 st.set_page_config(page_title="ThriftScan AI", page_icon="👕", layout="wide", initial_sidebar_state="collapsed")
 
@@ -9,7 +9,8 @@ if "GEMINI_API_KEY" not in st.secrets:
     st.error("GEMINI_API_KEY missing in Streamlit Secrets.")
     st.stop()
 
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+API_KEY = st.secrets["GEMINI_API_KEY"]
+API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key={API_KEY}"
 
 st.markdown("""
 <style>
@@ -46,6 +47,21 @@ def _build_prompt(price: float, mode: str) -> str:
         "FAIR VALUE: Rs.low-Rs.high\nRESALE: level\nOUTFIT 1: combo\nOUTFIT 2: combo\n"
         "SUSTAINABILITY: benefit\nVERDICT: BUY or PASS or NEGOTIATE\nREASON: 2 short sentences."
     )
+
+
+def call_gemini(prompt: str, image_bytes: bytes) -> str:
+    b64 = base64.b64encode(image_bytes).decode()
+    payload = {
+        "contents": [{
+            "parts": [
+                {"text": prompt},
+                {"inline_data": {"mime_type": "image/jpeg", "data": b64}}
+            ]
+        }]
+    }
+    r = requests.post(API_URL, json=payload)
+    r.raise_for_status()
+    return r.json()["candidates"][0]["content"]["parts"][0]["text"]
 
 
 def _render_results(raw: str, price: float):
@@ -101,14 +117,9 @@ with col_right:
         try:
             buf = io.BytesIO()
             image.save(buf, format="JPEG", quality=85)
-            image_bytes = buf.getvalue()
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content([
-                _build_prompt(price_val, mode_val),
-                {"mime_type": "image/jpeg", "data": image_bytes}
-            ])
+            result = call_gemini(_build_prompt(price_val, mode_val), buf.getvalue())
             status.empty()
-            _render_results(response.text, price_val)
+            _render_results(result, price_val)
         except Exception as e:
             status.empty()
             st.markdown(f'<div class="err-box">Error: {str(e)}</div>', unsafe_allow_html=True)
