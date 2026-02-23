@@ -119,7 +119,7 @@ with col_right:
             image_bytes = buf.getvalue()
 
             response = client.models.generate_content(
-                model="models/gemini-1.5-flash",
+               model="gemini-1.5-flash",
                 contents=[
                   _build_prompt(price_val, mode_val),
                    types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
