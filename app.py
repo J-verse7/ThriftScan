@@ -10,7 +10,7 @@ if "GEMINI_API_KEY" not in st.secrets:
     st.stop()
 
 API_KEY = st.secrets["GEMINI_API_KEY"]
-API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash:generateContent?key={API_KEY}"
+API_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-2.0-flash-lite:generateContent?key={API_KEY}"
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@300;400;600;700&family=DM+Sans:wght@300;400;500&display=swap');
